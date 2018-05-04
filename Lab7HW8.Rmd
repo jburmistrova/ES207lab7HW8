@@ -1,0 +1,324 @@
+---
+title: "HW 8"
+author: "Julia Burmistrova"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+require(tidyverse)
+require(lubridate)
+require(wql)
+```
+
+
+1. What is the class of Nile? What is the time interval of the time series?
+* Class of Nile is "ts" or time series
+* Time interval of the series is from 1871 to 1970 (100 years) and the time series is of length 100 so it is yearly data. Or in other words, frequency is 1 so it is annual data. 
+
+```{r}
+data(Nile)
+head(Nile)
+Nile
+
+?Nile
+class(Nile)
+
+plot(Nile)
+```
+
+### Ozone Data 
+
+
+```{r}
+o3.filenames <- list.files(pattern = ".txt") #Find all of the files in current location with .txt in the file name and create a list of these names.
+o3.filelist <- lapply(o3.filenames, read_delim, delim = "|") #Read in all of the delimited data from the text files in the list to create a list of dataframes.
+names(o3.filelist) <- gsub(".txt","", o3.filenames) #Remove the file extensions by replacing the names of the dataframes in the large list with the filenames from the initial where a blank was substituted as the .txt extension.
+
+location <- read_csv("location.csv")
+basins <- location[,c(2,10,11)] %>%
+  rename("site" = "Site")
+
+
+daily.mean <- function(df) {
+  df %>% 
+  group_by(site = as.factor(site), date) %>% 
+  summarize(o3 = mean(obs, na.rm = TRUE)) %>% 
+  drop_na()  
+  }
+d <- map(o3.filelist, daily.mean)
+head(d)
+```
+
+```{r}
+
+filter.station <- function(df, x) {
+  df %>% 
+  filter(site == x)
+}
+
+sb.o3 <- map(d, filter.station, 2008)
+sb.o3
+
+sb <- sb.o3 %>% 
+  bind_rows()
+sb
+```
+
+```{r}
+ggplot(sb, aes(x = date, y = o3)) + geom_line()
+```
+
+```{r}
+sb.ts <- ts(sb$o3, start = c(1980,1), frequency = 365.25)
+head(sb.ts)
+```
+
+2. ts() only handles regularly spaced time series data. How do we deal with irregularly spaced time series? Do some internet research and describe some options, as well as pitfalls or limitations.
+* model it as discrete time observations instead of continuous (https://stats.stackexchange.com/questions/33796/is-there-any-gold-standard-for-modeling-irregularly-spaced-time-series)
+* transform the data into evenly spaced data using interpolation (https://datascopeanalytics.com/blog/unevenly-spaced-time-series/)
+
+```{r}
+plot.ts(sb.ts) 
+acf(sb.ts) 
+```
+
+```{r}
+sb$mo <- as.factor(lubridate::month(sb$date))
+ggplot(sb, aes(x = mo, y = o3, group = mo)) + geom_boxplot()
+```
+
+```{r}
+sb$yr <- year(sb$date)
+sb.mo <- sb %>%
+  select(-site, -date) %>% 
+  group_by(yr, mo) %>% 
+  summarize(o3 = median(o3)) 
+sb.mo
+```
+
+```{r}
+#taking the monthly median
+ggplot(sb.mo, aes(x = mo, y = o3, group = mo)) + geom_boxplot()
+```
+
+3. What is the approximate lag for the o3 at this site in Santa Barbara? Provide this in meaningful units.Sources: https://stats.stackexchange.com/questions/134487/analyse-acf-and-pacf-plots ; very helpful: https://coolstatsblog.com/2013/08/11/how-to-use-autocorreation-function-acf-to-determine-seasonality/
+
+* Osciliation shows season correlation. 
+* Peak spikes are at every 1.0, so this would be every month because the frequency is 12 and this is monthly data. 
+* This means that January is more similar to February compared to August. This means that months closer together influence each other. One possible explanation is the seasonality (temperature, weather, etc).
+
+```{r}
+sb.mo.ts <- ts(sb.mo$o3, start = c(1980, 1), frequency = 12)
+acf(sb.mo.ts)
+```
+
+ 
+
+
+4. Interpret this plot. What does this tell us? Use internet research as appropriate.
+* Partial ACF substracts the initial lag at 0 from the correlation and find the residual correlation. This removes the seasonality in this case. 
+* This removes the montly lag from the data, so now we can see there is another oscillation correlation in the ozone data (similarly, it is also are around one month). We could look at other patterns in the environment that could be explain such a lag (maybe precipitation?).
+
+```{r}
+pacf(sb.mo.ts)
+```
+
+```{r}
+plot.ts(sb.mo.ts)
+```
+
+5. Transform the monthly Santa Barbara o3 time series by calculating the natural log and plot the results. Which case (original or transformed) is best described by an additive model?
+* Both look the same visually but are they the same?
+* Using the homogeneity test, both the chi-sq and the p-values are the same, so therefore we can conclude the plots are the same. 
+* An additive model is appropriate when fluctuations are roughly constant in size over time and do not seem to depend on the level of the time series, and the random fluctuations also seem to be roughly constant in size over time (From html doc). I would use an additive model on the original data, not the log transformed data, because it hasn't been influenced in any way. 
+
+```{r}
+log.sb.mo.ts <- log(sb.mo.ts) #in r log is the ln and log10 is log 
+plot(sb.mo.ts, col = "blue")
+plot(log.sb.mo.ts, new = FALSE)
+
+trendHomog(sb.mo.ts)
+trendHomog(log.sb.mo.ts)
+```
+
+6. What class is the resulting object from applying decompose()? What does it contain?
+* The class is decomposed.ts or decomposed time series 
+* It contains observed, trend, seasonal, and random graphs. The trend, seasonal, and random patterns are taken out of the oberved data by the function. 
+
+```{r}
+sb.components <- decompose(sb.mo.ts, type = "additive")
+plot(sb.components)
+
+class(sb.components)
+```
+
+```{r}
+lagged.sb <- stats::lag(sb.mo.ts, 1)
+plot(lagged.sb)
+```
+
+```{r}
+sb.adj <- sb.mo.ts - sb.components$seasonal
+plot(sb.mo.ts)
+lines(sb.adj, col = "red")
+```
+
+7. Assess the additive model performance. How well did it adjust for seasonality in Santa Barbara o3? Show your steps.
+* This is asking to look at the variance between the two
+* CHAPTER 10 - F-ratio compares the variances 
+* Step 1: look at the plots -- There are differences. When we look at the zoomed in data, it appears that the data has been shifted (the lag has been seemingly successfully removed).
+* Step 2: var.test to check the variance; Ratio of the variances is 2.38 and the p value is significant (suspiciously significant ;) )
+* Step 3: check the anova (aov function) - include F value, low p-value, significantly different distributions 
+* Step 4: check the Mann-Kendal (below for monthly and using the seasonsal Mann Kendall): the two p-values are very different (~0.05 and 0.0006) BUT slope differences of (0.0019 and 0.0021) are close. 
+
+```{r}
+var.test(sb.adj, sb.mo.ts)
+aov(sb.adj ~ sb.mo.ts)
+```
+
+
+
+```{r}
+plot(sb.mo.ts, xlim = c(2005,2010))
+lines(sb.adj, col = "red")
+var.test(sb.mo.ts, sb.adj)
+summary(aov(sb.mo.ts ~ sb.adj))
+```
+
+
+
+```{r}
+mk <- mannKen(sb.mo.ts)
+mk
+```
+
+```{r}
+mk2 <- seaKen(sb.mo.ts)
+mk2
+```
+
+```{r}
+seasonTrend(sb.mo.ts, plot = TRUE, scales = "free")
+plotSeason(sb.mo.ts, "by.month")
+```
+
+8. What can you conclude about the appropriateness of the Seasonal Mann-Kendall test for trend for this case?.
+* Since trends differ in sign seasonTrend() shows that there are postive and negative trends, the seaKen() function is not appropriate for this case. 
+
+
+```{r}
+trendHomog(sb.mo.ts)
+trendHomog(log.sb.mo.ts)
+```
+
+```{r}
+pett(sb.mo.ts)
+plot(sb.mo.ts, ylab = "Ozone", xlab = "")
+abline(v = 2001.083, col = "blue")
+```
+
+```{r}
+plotTsAnom(sb.mo.ts, ylab = "Ozone")
+```
+
+```{r}
+plotTsTile(sb.mo.ts)
+```
+
+#### Now look at all of California
+
+9. What are the trends in monthly Ozone across California from 1980 - 2011? Compare trends between different air quality basins. Show your work and justify your statistical assumptions.
+
+So the steps that I would want to do (if I don't accomplish it) is 
+1. read in the locations CSV and get all the sites labeled with the basin info
+2. get all the basins in their own tibble 
+3. then do monthly mean 
+3. to ts analysis 
+
+This works
+m <- o3.filelist%>%
+  bind_rows() %>%
+  monthly.mean() %>%
+  subset(site %in% unique.site.codes) %>%
+  left_join(basins)
+  
+This works
+m.basins <- m %>%
+  group_by(`Basin Name`) %>%
+  nest()
+
+```{r}
+
+unique.site.codes <- as.vector(reduce(list(o3.filelist$ozone19801984$site, o3.filelist$ozone19851989$site, o3.filelist$ozone19901994$site, o3.filelist$ozone19951999$site, o3.filelist$ozone20002004$site, o3.filelist$ozone20052009$site, o3.filelist$ozone20102011$site), intersect)) #GASP IT WORKED :D - these are all the station codes that are found in ALL of the files; 55 in total 
+
+
+monthly.mean <- function(df) {
+  df %>% 
+  mutate(yr = as.factor(lubridate::year(date))) %>% 
+  group_by(yr = yr, mo = month(date)) %>% 
+  summarize(o3 = mean(obs, na.rm = TRUE)) %>% 
+  drop_na()  
+  }
+
+o3.basins <- o3.filelist%>%
+  bind_rows() %>%
+  left_join(basins)
+
+o3.basins.list <- o3.basins%>%
+  subset(site %in% unique.site.codes) %>%
+  group_by(`Basin Name`) %>%
+  nest()
+
+m.basins.data <- map(o3.basins.list$data, monthly.mean) 
+m.basins.data
+
+basin.name.in.tibble <- o3.basins.list$`Basin Name`
+basin.name.in.tibble
+
+
+
+
+
+# m <- m[,c(2,3,4,1)]
+# m.no.site <- m[,c(1,2,3)]
+
+
+
+```
+
+Now that data wrangling is done, I will lapply some of the functions above from question 2-8. 
+We are comparing 11 basins that have complete time datasets from 1980 to 2011. Each have the monthly mean of the ozone calculated. 
+If I had more time, I would try to compare the map of the basins to find patterns in O3 in Calfornia. It's difficult to compare 11 basins at the same time. 
+
+```{r}
+o3.basin.ts <- as.list(1) #seeding
+for (i in 1:length(basin.name.in.tibble)) {
+  o3.basin.ts[[i]] <- ts(m.basins.data[[i]]$o3, frequency = 12) #because monthly average, so time series is monthly (12)
+  plot.ts(o3.basin.ts[[i]])
+}
+
+```
+
+Every basin as O3 seasonality and lags by 1 month 
+```{r}
+o3.basins.acf <- lapply(o3.basin.ts, acf)
+```
+
+```{r}
+o3.basins.decompose <- lapply(o3.basin.ts, decompose)
+lapply(o3.basins.decompose, plot)
+```
+
+```{r}
+o3.basins.mk <- lapply(o3.basin.ts, mannKen)
+o3.basins.mk
+```
+
+
+```{r}
+o3.basin.tile <- lapply(o3.basin.ts, plotTsTile)
+o3.basin.tile
+```
+
