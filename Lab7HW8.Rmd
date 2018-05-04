@@ -322,3 +322,10 @@ o3.basin.tile <- lapply(o3.basin.ts, plotTsTile)
 o3.basin.tile
 ```
 
+Basin 5 is the only one that has all the same sign trend, and it would be the only one that could use seaKen() function
+```{r}
+o3.basins.seasontrend <- lapply(o3.basin.ts, seasonTrend, plot=T)
+o3.basins.seasontrend 
+                   
+```
+
